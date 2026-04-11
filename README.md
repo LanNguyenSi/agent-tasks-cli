@@ -25,7 +25,7 @@ export AGENT_TASKS_ENDPOINT=https://agent-tasks.opentriologue.ai
 export AGENT_TASKS_TOKEN=at_...
 ```
 
-Or config file (`~/.agent-tasks.json`):
+Or config file (`~/.agent-tasks.json`), with fallback to `~/.config/agent-tasks/config.json`:
 
 ```json
 {
@@ -45,6 +45,13 @@ agent-tasks signals
 # Show acknowledged signals
 agent-tasks signals --acknowledged
 
+# Limit number of signals returned
+agent-tasks signals --limit 10
+
+# Output as JSON or IDs-only (--json / --quiet also work here)
+agent-tasks signals --json
+agent-tasks signals --quiet
+
 # Acknowledge a signal
 agent-tasks ack <signal-id>
 ```
@@ -55,11 +62,12 @@ agent-tasks ack <signal-id>
 # List claimable tasks
 agent-tasks tasks list
 
-# Claim a task
+# Claim a task (release is not yet implemented in the CLI)
 agent-tasks tasks claim <task-id>
 agent-tasks tasks claim <task-id> --force    # bypass confidence threshold
 
-# Transition task status
+# Transition task status (valid values: open, in_progress, review, done)
+agent-tasks tasks status <task-id> in_progress
 agent-tasks tasks status <task-id> review
 agent-tasks tasks status <task-id> done
 
