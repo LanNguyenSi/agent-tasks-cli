@@ -62,9 +62,22 @@ agent-tasks ack <signal-id>
 # List claimable tasks
 agent-tasks tasks list
 
-# Claim a task (release is not yet implemented in the CLI)
+# Fetch a single task by id
+agent-tasks tasks get <task-id>
+
+# Create a task (project can be a slug or UUID)
+agent-tasks tasks create my-project --title "Fix the bug"
+agent-tasks tasks create my-project \
+  --title "Import from Jira" \
+  --priority HIGH \
+  --description "Full description" \
+  --external-ref "jira-PROJ-42" \
+  --label imported --label backend
+
+# Claim / release a task
 agent-tasks tasks claim <task-id>
 agent-tasks tasks claim <task-id> --force    # bypass confidence threshold
+agent-tasks tasks release <task-id>
 
 # Transition task status (valid values: open, in_progress, review, done)
 agent-tasks tasks status <task-id> in_progress
@@ -79,6 +92,43 @@ agent-tasks tasks comment <task-id> "Fixed the bug, ready for review"
 
 # Get task instructions (agent context)
 agent-tasks tasks instructions <task-id>
+```
+
+### Projects
+
+```bash
+# List all projects visible to your token
+agent-tasks projects list
+
+# Fetch a single project by slug or UUID
+agent-tasks projects get my-project
+agent-tasks projects get 11111111-1111-1111-1111-111111111111
+```
+
+### GitHub delegation
+
+These commands drive the server's GitHub delegation endpoints — a team
+member with `allowAgentPr*` consent acts on the agent's behalf.
+
+```bash
+# Create a PR linked to a task
+agent-tasks github pr create \
+  --task <task-id> \
+  --owner LanNguyenSi --repo agent-tasks \
+  --head feat/my-branch --base master \
+  --title "feat: do the thing" \
+  --body "Fixes the bug"
+
+# Merge a PR (default method: squash)
+agent-tasks github pr merge <pr-number> \
+  --task <task-id> \
+  --owner LanNguyenSi --repo agent-tasks \
+  --method squash
+
+# Comment on a PR
+agent-tasks github pr comment <pr-number> "LGTM" \
+  --task <task-id> \
+  --owner LanNguyenSi --repo agent-tasks
 ```
 
 ### Review
@@ -114,10 +164,15 @@ agent-tasks tasks list
 agent-tasks tasks claim <task-id>
 agent-tasks tasks instructions <task-id>
 
-# 4. Update with PR info
-agent-tasks tasks update <task-id> --branch feat/x --pr-url https://... --pr-number 1
+# 4. Push the branch, then create a PR via delegation
+agent-tasks github pr create \
+  --task <task-id> \
+  --owner acme --repo my-repo \
+  --head feat/x --base master \
+  --title "feat: my change"
 
-# 5. Submit for review
+# 5. Submit for review (the update step is optional — github pr create
+# already writes branchName/prUrl/prNumber back to the task)
 agent-tasks tasks status <task-id> review
 
 # 6. Check for review feedback

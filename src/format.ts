@@ -1,7 +1,7 @@
 /**
  * Output formatting helpers.
  */
-import type { Task, Signal } from "./api.js";
+import type { Project, Task, Signal } from "./api.js";
 
 export type OutputMode = "table" | "json" | "quiet";
 
@@ -32,6 +32,33 @@ export function formatTask(task: Task, mode: OutputMode): string {
   ];
   if (task.branchName) lines.push(`Branch:   ${task.branchName}`);
   if (task.prUrl) lines.push(`PR:       ${task.prUrl}`);
+  return lines.join("\n");
+}
+
+export function formatProjects(projects: Project[], mode: OutputMode): string {
+  if (mode === "json") return JSON.stringify(projects, null, 2);
+  if (mode === "quiet") return projects.map((p) => p.slug).join("\n");
+
+  if (projects.length === 0) return "No projects found.";
+
+  const lines = projects.map((p) => {
+    const repo = p.githubRepo ?? "";
+    return `${p.slug.padEnd(30)} ${repo.padEnd(40)} ${p.name}`;
+  });
+  return `${"SLUG".padEnd(30)} ${"GITHUB REPO".padEnd(40)} NAME\n${lines.join("\n")}`;
+}
+
+export function formatProject(project: Project, mode: OutputMode): string {
+  if (mode === "json") return JSON.stringify(project, null, 2);
+  if (mode === "quiet") return project.id;
+
+  const lines = [
+    `ID:          ${project.id}`,
+    `Slug:        ${project.slug}`,
+    `Name:        ${project.name}`,
+  ];
+  if (project.githubRepo) lines.push(`GitHub repo: ${project.githubRepo}`);
+  if (project.description) lines.push(`Description: ${project.description}`);
   return lines.join("\n");
 }
 

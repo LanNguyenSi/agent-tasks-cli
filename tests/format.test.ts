@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatTasks, formatTask, formatSignals } from "../src/format.js";
+import {
+  formatTasks,
+  formatTask,
+  formatSignals,
+  formatProjects,
+  formatProject,
+} from "../src/format.js";
 
 describe("formatTasks", () => {
   const tasks = [
@@ -64,5 +70,74 @@ describe("formatSignals", () => {
   it("formats as JSON", () => {
     const out = formatSignals(signals, "json");
     expect(JSON.parse(out)).toHaveLength(1);
+  });
+});
+
+describe("formatProjects", () => {
+  const projects = [
+    { id: "p1-id", name: "Project One", slug: "project-one", githubRepo: "acme/one" },
+    { id: "p2-id", name: "Project Two", slug: "project-two", githubRepo: null },
+  ];
+
+  it("formats as table with slug + repo + name", () => {
+    const out = formatProjects(projects, "table");
+    expect(out).toContain("project-one");
+    expect(out).toContain("acme/one");
+    expect(out).toContain("Project Two");
+    expect(out).toContain("SLUG");
+  });
+
+  it("formats as JSON", () => {
+    const parsed = JSON.parse(formatProjects(projects, "json"));
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].slug).toBe("project-one");
+  });
+
+  it("quiet mode returns slugs, one per line", () => {
+    expect(formatProjects(projects, "quiet")).toBe("project-one\nproject-two");
+  });
+
+  it("shows message for empty list", () => {
+    expect(formatProjects([], "table")).toBe("No projects found.");
+  });
+});
+
+describe("formatProject", () => {
+  const project = {
+    id: "11111111-1111-1111-1111-111111111111",
+    name: "Project One",
+    slug: "project-one",
+    description: "Does a thing",
+    githubRepo: "acme/one",
+  };
+
+  it("shows id, slug, name, and optional fields when set", () => {
+    const out = formatProject(project, "table");
+    expect(out).toContain("Project One");
+    expect(out).toContain("project-one");
+    expect(out).toContain("acme/one");
+    expect(out).toContain("Does a thing");
+  });
+
+  it("omits optional fields when not set", () => {
+    const minimal = {
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "Lean",
+      slug: "lean",
+    };
+    const out = formatProject(minimal, "table");
+    expect(out).not.toContain("GitHub repo");
+    expect(out).not.toContain("Description");
+  });
+
+  it("quiet mode returns just the ID", () => {
+    expect(formatProject(project, "quiet")).toBe(
+      "11111111-1111-1111-1111-111111111111",
+    );
+  });
+
+  it("formats as JSON", () => {
+    const parsed = JSON.parse(formatProject(project, "json"));
+    expect(parsed.slug).toBe("project-one");
   });
 });
