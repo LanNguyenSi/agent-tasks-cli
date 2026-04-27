@@ -140,6 +140,14 @@ tasks
       );
       process.exit(1);
     }
+    // Backend's finishReviewSchema rejects this combination — surface it
+    // as a clean CLI error instead of a 400 round-trip.
+    if (opts.autoMerge && opts.outcome === "request_changes") {
+      console.error(
+        "Error: --auto-merge is not allowed with --outcome request_changes.",
+      );
+      process.exit(1);
+    }
 
     const config = loadConfig();
     const body: api.FinishInput = opts.outcome
