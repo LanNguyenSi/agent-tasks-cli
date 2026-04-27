@@ -8,6 +8,9 @@ import {
   formatSignals,
   formatProjects,
   formatProject,
+  formatPickup,
+  formatStart,
+  formatGates,
   type OutputMode,
 } from "./format.js";
 
@@ -19,10 +22,21 @@ function getMode(opts: { json?: boolean; quiet?: boolean }): OutputMode {
   return "table";
 }
 
+// Single warning per process — repeated calls (e.g. piped scripts looping over
+// many ids) shouldn't spam stderr more than once.
+const warnedDeprecations = new Set<string>();
+function warnDeprecated(oldCmd: string, newCmd: string): void {
+  if (warnedDeprecations.has(oldCmd)) return;
+  warnedDeprecations.add(oldCmd);
+  process.stderr.write(
+    `[deprecated] '${oldCmd}' is a v1 alias; use '${newCmd}' (v2 verb API). Aliases will be removed in a future release.\n`,
+  );
+}
+
 program
   .name("agent-tasks")
   .description("CLI client for agent-tasks — task management for local AI agents")
-  .version("0.2.0");
+  .version("0.3.0");
 
 // ── Signals ─────────────────────────────────────────────────────────────────
 
@@ -56,11 +70,131 @@ program
     }
   });
 
+// ── v2 verb API ─────────────────────────────────────────────────────────────
+//
+// `pickup` / `tasks start` / `tasks finish` / `tasks abandon` / `tasks submit-pr`
+// are the canonical v2 surface. They mirror the MCP tools of the same name and
+// supersede the v1 claim/release/transition/review subcommands further down
+// (which still work but emit a deprecation warning).
+
+program
+  .command("pickup")
+  .description("Pick up the next signal, review, or work item (v2)")
+  .option("--json", "JSON output")
+  .option("--quiet", "Only the id (signal id or task id)")
+  .action(async (opts) => {
+    const config = loadConfig();
+    const result = await api.taskPickup(config);
+    console.log(formatPickup(result, getMode(opts)));
+  });
+
 // ── Tasks ───────────────────────────────────────────────────────────────────
 
 const tasks = program
   .command("tasks")
   .description("Task operations");
+
+tasks
+  .command("start <task-id>")
+  .description("Begin work on a task (v2 — atomic claim + transition)")
+  .option("--json", "JSON output")
+  .option("--quiet", "Only task ID")
+  .action(async (taskId, opts) => {
+    const config = loadConfig();
+    const result = await api.taskStart(config, taskId);
+    console.log(formatStart(result, getMode(opts)));
+  });
+
+tasks
+  .command("finish <task-id>")
+  .description("Finish a task — work-claim or review-claim (v2)")
+  .option("--result <text>", "Result summary")
+  .option("--pr-url <url>", "PR URL (work-claim only; must be a github.com PR)")
+  .option(
+    "--outcome <outcome>",
+    "Review outcome: approve | request_changes (review-claim only)",
+  )
+  .option("--auto-merge", "Auto-merge the PR after approval")
+  .option(
+    "--merge-method <method>",
+    "Merge method: merge | squash | rebase (default: squash)",
+  )
+  .option("--json", "JSON output")
+  .option("--quiet", "Only task ID")
+  .action(async (taskId, opts) => {
+    if (opts.outcome && !["approve", "request_changes"].includes(opts.outcome)) {
+      console.error(
+        `Error: --outcome must be 'approve' or 'request_changes' (got: ${opts.outcome})`,
+      );
+      process.exit(1);
+    }
+    if (opts.mergeMethod && !["merge", "squash", "rebase"].includes(opts.mergeMethod)) {
+      console.error(
+        `Error: --merge-method must be one of merge, squash, rebase (got: ${opts.mergeMethod})`,
+      );
+      process.exit(1);
+    }
+    if (opts.prUrl && opts.outcome) {
+      console.error(
+        "Error: --pr-url is for work-claim finish; --outcome is for review-claim finish. Pick one.",
+      );
+      process.exit(1);
+    }
+    // Backend's finishReviewSchema rejects this combination — surface it
+    // as a clean CLI error instead of a 400 round-trip.
+    if (opts.autoMerge && opts.outcome === "request_changes") {
+      console.error(
+        "Error: --auto-merge is not allowed with --outcome request_changes.",
+      );
+      process.exit(1);
+    }
+
+    const config = loadConfig();
+    const body: api.FinishInput = opts.outcome
+      ? { outcome: opts.outcome as "approve" | "request_changes" }
+      : {};
+    if (opts.result) body.result = opts.result;
+    if (opts.prUrl && !opts.outcome) (body as api.FinishWorkInput).prUrl = opts.prUrl;
+    if (opts.autoMerge) body.autoMerge = true;
+    if (opts.mergeMethod) body.mergeMethod = opts.mergeMethod as api.MergeMethod;
+
+    const result = await api.taskFinish(config, taskId, body);
+    console.log(formatTask(result.task, getMode(opts)));
+  });
+
+tasks
+  .command("abandon <task-id>")
+  .description("Release a claim without finishing (v2)")
+  .option("--json", "JSON output")
+  .option("--quiet", "Only task ID")
+  .action(async (taskId, opts) => {
+    const config = loadConfig();
+    const { task } = await api.taskAbandon(config, taskId);
+    console.log(formatTask(task, getMode(opts)));
+  });
+
+tasks
+  .command("submit-pr <task-id>")
+  .description("Attach branch + PR metadata to a work-claimed task (v2)")
+  .requiredOption("--branch <name>", "Branch name")
+  .requiredOption("--pr-url <url>", "PR URL (must be a github.com PR)")
+  .requiredOption("--pr-number <n>", "PR number")
+  .option("--json", "JSON output")
+  .option("--quiet", "Only task ID")
+  .action(async (taskId, opts) => {
+    const prNumber = Number(opts.prNumber);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      console.error(`Error: --pr-number must be a positive integer (got: ${opts.prNumber})`);
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const { task } = await api.submitPr(config, taskId, {
+      branchName: opts.branch,
+      prUrl: opts.prUrl,
+      prNumber,
+    });
+    console.log(formatTask(task, getMode(opts)));
+  });
 
 tasks
   .command("list")
@@ -153,11 +287,12 @@ tasks
 
 tasks
   .command("claim <task-id>")
-  .description("Claim a task")
+  .description("[deprecated] Claim a task — use 'tasks start' (v2)")
   .option("--force", "Bypass confidence threshold")
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    warnDeprecated("tasks claim", "tasks start");
     const config = loadConfig();
     const task = await api.claimTask(config, taskId, opts.force);
     console.log(formatTask(task, getMode(opts)));
@@ -165,10 +300,11 @@ tasks
 
 tasks
   .command("status <task-id> <status>")
-  .description("Transition task status (open, in_progress, review, done)")
+  .description("[deprecated] Transition task status — use 'tasks start' / 'tasks finish' (v2)")
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, status, opts) => {
+    warnDeprecated("tasks status", "tasks start / tasks finish");
     const config = loadConfig();
     const task = await api.transitionTask(config, taskId, status);
     console.log(formatTask(task, getMode(opts)));
@@ -176,10 +312,11 @@ tasks
 
 tasks
   .command("release <task-id>")
-  .description("Release a claimed task back to the claimable pool")
+  .description("[deprecated] Release a claimed task — use 'tasks abandon' (v2)")
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    warnDeprecated("tasks release", "tasks abandon");
     const config = loadConfig();
     const task = await api.releaseTask(config, taskId);
     console.log(formatTask(task, getMode(opts)));
@@ -253,6 +390,21 @@ projects
     const config = loadConfig();
     const project = await api.getProject(config, slugOrId);
     console.log(formatProject(project, getMode(opts)));
+  });
+
+projects
+  .command("effective-gates <slug-or-id>")
+  .description("Show which workflow gates apply to a project")
+  .option("--json", "JSON output")
+  .option("--quiet", "Only the names of gates that apply")
+  .action(async (slugOrId, opts) => {
+    const config = loadConfig();
+    // Gate endpoint takes the UUID — resolve slug first if needed.
+    const projectId = api.isUuid(slugOrId)
+      ? slugOrId
+      : (await api.getProject(config, slugOrId)).id;
+    const gates = await api.getEffectiveGates(config, projectId);
+    console.log(formatGates(gates, getMode(opts)));
   });
 
 // ── GitHub delegation ───────────────────────────────────────────────────────
@@ -358,11 +510,12 @@ const review = program
 
 review
   .command("approve <task-id>")
-  .description("Approve a task")
+  .description("[deprecated] Approve a task — use 'tasks finish --outcome approve' (v2)")
   .option("-c, --comment <text>", "Review comment")
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    warnDeprecated("review approve", "tasks finish --outcome approve");
     const config = loadConfig();
     const task = await api.reviewTask(config, taskId, "approve", opts.comment);
     console.log(formatTask(task, getMode(opts)));
@@ -370,11 +523,12 @@ review
 
 review
   .command("request-changes <task-id>")
-  .description("Request changes on a task")
+  .description("[deprecated] Request changes — use 'tasks finish --outcome request_changes' (v2)")
   .option("-c, --comment <text>", "Review comment")
   .option("--json", "JSON output")
   .option("--quiet", "Only task ID")
   .action(async (taskId, opts) => {
+    warnDeprecated("review request-changes", "tasks finish --outcome request_changes");
     const config = loadConfig();
     const task = await api.reviewTask(config, taskId, "request_changes", opts.comment);
     console.log(formatTask(task, getMode(opts)));
@@ -382,9 +536,10 @@ review
 
 review
   .command("claim <task-id>")
-  .description("Claim the review lock on a task")
+  .description("[deprecated] Claim the review lock — use 'tasks start' (v2 polymorphic)")
   .option("--json", "JSON output")
   .action(async (taskId, opts) => {
+    warnDeprecated("review claim", "tasks start");
     const config = loadConfig();
     const task = await api.claimReview(config, taskId);
     if (opts.json) console.log(JSON.stringify(task, null, 2));
@@ -393,8 +548,9 @@ review
 
 review
   .command("release <task-id>")
-  .description("Release the review lock")
+  .description("[deprecated] Release the review lock — use 'tasks abandon' (v2)")
   .action(async (taskId) => {
+    warnDeprecated("review release", "tasks abandon");
     const config = loadConfig();
     await api.releaseReview(config, taskId);
     console.log("Review lock released.");

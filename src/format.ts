@@ -62,6 +62,49 @@ export function formatProject(project: Project, mode: OutputMode): string {
   return lines.join("\n");
 }
 
+export function formatPickup(result: import("./api.js").PickupResult, mode: OutputMode): string {
+  if (mode === "json") return JSON.stringify(result, null, 2);
+  if (mode === "quiet") {
+    if (result.kind === "signal") return result.signal.id;
+    if (result.kind === "review" || result.kind === "work") return result.task.id;
+    return "";
+  }
+  if (result.kind === "idle") return "Idle — nothing to pick up.";
+  if (result.kind === "signal") {
+    const ctx = result.signal.context as Record<string, unknown>;
+    const title = (ctx.taskTitle as string) ?? result.signal.taskId;
+    return `[signal] ${result.signal.type}\n  ${title}\n  signal-id: ${result.signal.id}`;
+  }
+  const tag = result.kind === "review" ? "review" : "work";
+  return `[${tag}] ${result.task.title}\n  task-id: ${result.task.id}\n  project: ${result.project.slug}`;
+}
+
+export function formatStart(result: import("./api.js").StartResult, mode: OutputMode): string {
+  if (mode === "json") return JSON.stringify(result, null, 2);
+  if (mode === "quiet") return result.task.id;
+  return [
+    `Started ${result.kind} on ${result.task.id}`,
+    `Title:               ${result.task.title}`,
+    `Project:             ${result.project.slug}`,
+    `Status:              ${result.task.status}`,
+    `expectedFinishState: ${result.expectedFinishState}`,
+  ].join("\n");
+}
+
+export function formatGates(
+  gates: import("./api.js").EffectiveGate[],
+  mode: OutputMode,
+): string {
+  if (mode === "json") return JSON.stringify(gates, null, 2);
+  if (mode === "quiet") return gates.filter((g) => g.active).map((g) => g.code).join("\n");
+  if (gates.length === 0) return "No gates configured.";
+  const lines = gates.map((g) => {
+    const flag = g.active ? "✓" : "·";
+    return `${flag.padEnd(8)} ${g.code.padEnd(28)} ${g.because}`;
+  });
+  return `${"ACTIVE".padEnd(8)} ${"GATE".padEnd(28)} REASON\n${lines.join("\n")}`;
+}
+
 export function formatSignals(signals: Signal[], mode: OutputMode): string {
   if (mode === "json") return JSON.stringify(signals, null, 2);
   if (mode === "quiet") return signals.map((s) => s.id).join("\n");
