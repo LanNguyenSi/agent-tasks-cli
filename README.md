@@ -36,6 +36,43 @@ Or config file (`~/.agent-tasks.json`), with fallback to `~/.config/agent-tasks/
 
 ## Commands
 
+### v2 verb API (preferred)
+
+The verb commands mirror the agent-tasks MCP tools (`task_pickup`,
+`task_start`, `task_finish`, `task_abandon`, `task_submit_pr`). They are
+the canonical surface for agent automation. The legacy
+`tasks claim` / `tasks status` / `tasks release` / `review *` subcommands
+still work but emit a deprecation warning — see [Deprecated v1 commands](#deprecated-v1-commands).
+
+```bash
+# Inbox: returns one of {kind: signal | review | work | idle}
+agent-tasks pickup
+
+# Begin work — atomic claim + transition + instructions in one call
+agent-tasks tasks start <task-id>
+
+# Attach branch + PR after `gh pr create`
+agent-tasks tasks submit-pr <task-id> \
+  --branch feat/my-branch \
+  --pr-url https://github.com/acme/repo/pull/42 \
+  --pr-number 42
+
+# Finish a work claim — moves the task to the workflow's expectedFinishState
+agent-tasks tasks finish <task-id> \
+  --result "Implemented X, tests green" \
+  --pr-url https://github.com/acme/repo/pull/42
+
+# Finish a review claim — approve or request changes
+agent-tasks tasks finish <task-id> --outcome approve --result "LGTM"
+agent-tasks tasks finish <task-id> --outcome request_changes --result "Please add tests"
+
+# Optional: auto-merge after approve
+agent-tasks tasks finish <task-id> --outcome approve --auto-merge --merge-method squash
+
+# Bail out of an active claim without finishing
+agent-tasks tasks abandon <task-id>
+```
+
 ### Signals (inbox)
 
 ```bash
@@ -74,17 +111,7 @@ agent-tasks tasks create my-project \
   --external-ref "jira-PROJ-42" \
   --label imported --label backend
 
-# Claim / release a task
-agent-tasks tasks claim <task-id>
-agent-tasks tasks claim <task-id> --force    # bypass confidence threshold
-agent-tasks tasks release <task-id>
-
-# Transition task status (valid values: open, in_progress, review, done)
-agent-tasks tasks status <task-id> in_progress
-agent-tasks tasks status <task-id> review
-agent-tasks tasks status <task-id> done
-
-# Update task fields
+# Update task fields directly (rarely needed — prefer `tasks submit-pr` / `tasks finish`)
 agent-tasks tasks update <task-id> --branch feat/my-branch --pr-url https://... --pr-number 42
 
 # Add a comment
@@ -103,6 +130,9 @@ agent-tasks projects list
 # Fetch a single project by slug or UUID
 agent-tasks projects get my-project
 agent-tasks projects get 11111111-1111-1111-1111-111111111111
+
+# Show which workflow gates apply to a project (and why)
+agent-tasks projects effective-gates my-project
 ```
 
 ### GitHub delegation
@@ -131,19 +161,21 @@ agent-tasks github pr comment <pr-number> "LGTM" \
   --owner LanNguyenSi --repo agent-tasks
 ```
 
-### Review
+### Deprecated v1 commands
 
-```bash
-# Approve a task
-agent-tasks review approve <task-id> -c "LGTM"
+These work for backwards compatibility but emit a one-line stderr warning
+and will be removed in a future release. Use the [v2 verb API](#v2-verb-api-preferred)
+instead.
 
-# Request changes
-agent-tasks review request-changes <task-id> -c "Please add tests"
-
-# Claim/release review lock
-agent-tasks review claim <task-id>
-agent-tasks review release <task-id>
-```
+| Deprecated                              | Replacement                                            |
+|-----------------------------------------|--------------------------------------------------------|
+| `tasks claim <id>`                      | `tasks start <id>`                                     |
+| `tasks release <id>`                    | `tasks abandon <id>`                                   |
+| `tasks status <id> <state>`             | `tasks start <id>` / `tasks finish <id>`               |
+| `review approve <id>`                   | `tasks finish <id> --outcome approve`                  |
+| `review request-changes <id>`           | `tasks finish <id> --outcome request_changes`          |
+| `review claim <id>`                     | `tasks start <id>` (polymorphic on review-state tasks) |
+| `review release <id>`                   | `tasks abandon <id>`                                   |
 
 ### Output formats
 
@@ -151,32 +183,29 @@ All list commands support:
 - `--json` — machine-readable JSON
 - `--quiet` — IDs only (for scripting)
 
-## Agent workflow example
+## Agent workflow example (v2)
 
 ```bash
-# 1. Check inbox for review requests
-agent-tasks signals
+# 1. Get the next thing to do — signal, review, work, or idle
+agent-tasks pickup
 
-# 2. Find work
-agent-tasks tasks list
+# 2. Begin work (atomic claim + transition + instructions)
+agent-tasks tasks start <task-id>
 
-# 3. Claim and work
-agent-tasks tasks claim <task-id>
-agent-tasks tasks instructions <task-id>
+# 3. Push the branch, create the PR with `gh`, then attach it to the task
+gh pr create --base master --head feat/x --title "feat: my change"
+agent-tasks tasks submit-pr <task-id> \
+  --branch feat/x \
+  --pr-url https://github.com/acme/repo/pull/42 \
+  --pr-number 42
 
-# 4. Push the branch, then create a PR via delegation
-agent-tasks github pr create \
-  --task <task-id> \
-  --owner acme --repo my-repo \
-  --head feat/x --base master \
-  --title "feat: my change"
+# 4. Hand off to review (or to done, depending on the workflow)
+agent-tasks tasks finish <task-id> \
+  --result "Implemented X, tests green" \
+  --pr-url https://github.com/acme/repo/pull/42
 
-# 5. Submit for review (the update step is optional — github pr create
-# already writes branchName/prUrl/prNumber back to the task)
-agent-tasks tasks status <task-id> review
-
-# 6. Check for review feedback
-agent-tasks signals
+# 5. Later: pickup might return a review-claim — approve or request changes
+agent-tasks tasks finish <reviewed-task-id> --outcome approve --result "LGTM"
 ```
 
 ## License

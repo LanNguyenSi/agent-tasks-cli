@@ -184,6 +184,131 @@ export async function getTaskInstructions(config: Config, taskId: string): Promi
   return request(config, `/api/tasks/${taskId}/instructions`);
 }
 
+// ── v2 verb API ─────────────────────────────────────────────────────────────
+//
+// Mirrors the agent-tasks v2 verb endpoints: pickup, start, finish, abandon,
+// submit-pr. These supersede the v1 claim/release/transition/review surface
+// (still callable via the helpers above for backwards compatibility). See
+// agent-tasks `backend/src/routes/tasks.ts` for the canonical schema.
+
+export interface PickupSignal {
+  kind: "signal";
+  signal: Signal;
+}
+
+export interface PickupReview {
+  kind: "review";
+  task: Task;
+  project: Project;
+}
+
+export interface PickupWork {
+  kind: "work";
+  task: Task;
+  project: Project;
+}
+
+export interface PickupIdle {
+  kind: "idle";
+}
+
+export type PickupResult = PickupSignal | PickupReview | PickupWork | PickupIdle;
+
+export async function taskPickup(config: Config): Promise<PickupResult> {
+  return request<PickupResult>(config, "/api/tasks/pickup", { method: "POST" });
+}
+
+export interface StartResult {
+  kind: "work" | "review";
+  task: Task;
+  project: Project;
+  expectedFinishState: string;
+}
+
+export async function taskStart(config: Config, taskId: string): Promise<StartResult> {
+  return request<StartResult>(config, `/api/tasks/${taskId}/start`, { method: "POST" });
+}
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+export interface FinishWorkInput {
+  result?: string;
+  prUrl?: string;
+  autoMerge?: boolean;
+  mergeMethod?: MergeMethod;
+}
+
+export interface FinishReviewInput {
+  result?: string;
+  outcome: "approve" | "request_changes";
+  autoMerge?: boolean;
+  mergeMethod?: MergeMethod;
+}
+
+export type FinishInput = FinishWorkInput | FinishReviewInput;
+
+export interface FinishResult {
+  task: Task;
+}
+
+export async function taskFinish(
+  config: Config,
+  taskId: string,
+  body: FinishInput,
+): Promise<FinishResult> {
+  return request<FinishResult>(
+    config,
+    `/api/tasks/${taskId}/finish`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export async function taskAbandon(config: Config, taskId: string): Promise<{ task: Task }> {
+  return request<{ task: Task }>(
+    config,
+    `/api/tasks/${taskId}/abandon`,
+    { method: "POST" },
+  );
+}
+
+export interface SubmitPrInput {
+  branchName: string;
+  prUrl: string;
+  prNumber: number;
+}
+
+export async function submitPr(
+  config: Config,
+  taskId: string,
+  body: SubmitPrInput,
+): Promise<{ task: Task }> {
+  return request<{ task: Task }>(
+    config,
+    `/api/tasks/${taskId}/submit-pr`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export interface EffectiveGate {
+  code: string;
+  name: string;
+  active: boolean;
+  because: string;
+  appliesTo: string[];
+}
+
+export async function getEffectiveGates(
+  config: Config,
+  projectId: string,
+): Promise<EffectiveGate[]> {
+  // Backend returns a Record<gateCode, EffectiveGate> under `effectiveGates`.
+  // We flatten to an array so output formatting can iterate it directly.
+  const { effectiveGates } = await request<{
+    effectiveGates: Record<string, EffectiveGate>;
+  }>(config, `/api/projects/${projectId}/effective-gates`);
+  return Object.values(effectiveGates);
+}
+
 // ── Reviews ─────────────────────────────────────────────────────────────────
 
 export async function reviewTask(config: Config, taskId: string, action: "approve" | "request_changes", comment?: string): Promise<Task> {

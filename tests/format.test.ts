@@ -5,6 +5,9 @@ import {
   formatSignals,
   formatProjects,
   formatProject,
+  formatPickup,
+  formatStart,
+  formatGates,
 } from "../src/format.js";
 
 describe("formatTasks", () => {
@@ -99,6 +102,146 @@ describe("formatProjects", () => {
 
   it("shows message for empty list", () => {
     expect(formatProjects([], "table")).toBe("No projects found.");
+  });
+});
+
+describe("formatPickup", () => {
+  const project = { id: "p1", name: "P", slug: "p" };
+
+  it("renders idle", () => {
+    const out = formatPickup({ kind: "idle" }, "table");
+    expect(out).toContain("Idle");
+  });
+
+  it("renders work pickup with task + project", () => {
+    const out = formatPickup(
+      {
+        kind: "work",
+        task: { id: "t1", title: "Do thing", status: "open", priority: "MEDIUM" },
+        project,
+      },
+      "table",
+    );
+    expect(out).toContain("[work]");
+    expect(out).toContain("Do thing");
+    expect(out).toContain("p");
+  });
+
+  it("renders signal pickup with type + title from context", () => {
+    const out = formatPickup(
+      {
+        kind: "signal",
+        signal: {
+          id: "s1",
+          type: "review_needed",
+          taskId: "t1",
+          projectId: "p1",
+          context: { taskTitle: "Review me" },
+          acknowledgedAt: null,
+          createdAt: "2026-04-27T00:00:00Z",
+        },
+      },
+      "table",
+    );
+    expect(out).toContain("[signal]");
+    expect(out).toContain("review_needed");
+    expect(out).toContain("Review me");
+  });
+
+  it("quiet returns task id for work/review, signal id for signal, empty for idle", () => {
+    expect(
+      formatPickup(
+        {
+          kind: "work",
+          task: { id: "t1", title: "x", status: "open", priority: "LOW" },
+          project,
+        },
+        "quiet",
+      ),
+    ).toBe("t1");
+    expect(
+      formatPickup(
+        {
+          kind: "signal",
+          signal: {
+            id: "s1",
+            type: "x",
+            taskId: "t1",
+            projectId: "p1",
+            context: {},
+            acknowledgedAt: null,
+            createdAt: "2026-04-27T00:00:00Z",
+          },
+        },
+        "quiet",
+      ),
+    ).toBe("s1");
+    expect(formatPickup({ kind: "idle" }, "quiet")).toBe("");
+  });
+
+  it("json round-trips", () => {
+    const result = { kind: "idle" } as const;
+    expect(JSON.parse(formatPickup(result, "json"))).toEqual(result);
+  });
+});
+
+describe("formatStart", () => {
+  const result = {
+    kind: "work" as const,
+    task: { id: "t1", title: "Hello", status: "in_progress", priority: "HIGH" },
+    project: { id: "p1", name: "P", slug: "proj" },
+    expectedFinishState: "review",
+  };
+
+  it("shows kind, task id, project, and expectedFinishState", () => {
+    const out = formatStart(result, "table");
+    expect(out).toContain("Started work on t1");
+    expect(out).toContain("Hello");
+    expect(out).toContain("proj");
+    expect(out).toContain("expectedFinishState: review");
+  });
+
+  it("quiet returns task id", () => {
+    expect(formatStart(result, "quiet")).toBe("t1");
+  });
+
+  it("json includes the full payload", () => {
+    expect(JSON.parse(formatStart(result, "json"))).toEqual(result);
+  });
+});
+
+describe("formatGates", () => {
+  const gates = [
+    {
+      code: "branch_present",
+      name: "Branch present",
+      active: true,
+      because: "PR submission required",
+      appliesTo: ["task_finish"],
+    },
+    {
+      code: "distinct_reviewer",
+      name: "Distinct reviewer",
+      active: false,
+      because: "soloMode disables this gate",
+      appliesTo: ["task_finish"],
+    },
+  ];
+
+  it("renders header + ✓/· markers", () => {
+    const out = formatGates(gates, "table");
+    expect(out).toContain("ACTIVE");
+    expect(out).toContain("branch_present");
+    expect(out).toContain("✓");
+    expect(out).toContain("·");
+  });
+
+  it("quiet returns only active gate codes", () => {
+    expect(formatGates(gates, "quiet")).toBe("branch_present");
+  });
+
+  it("empty list shows message", () => {
+    expect(formatGates([], "table")).toBe("No gates configured.");
   });
 });
 
